@@ -51,9 +51,29 @@ class WoofFitApp extends StatelessWidget {
         title: 'WoofFit',
         debugShowCheckedModeBanner: false,
         theme: buildTheme(),                          // From theme.dart
-        initialRoute: AppRouter.initialRoute,         // Defined in app_router.dart
-        onGenerateRoute: AppRouter.generateRoute,     // Router logic
+  home: const AuthWrapper(),
       ),
     );
+  }
+}
+// <--- IMPORTANT: THIS BRACE ENDS THE APP WIDGET
+
+
+// ------------------------------------------------------
+// PASTE AUTHWRAPPER BELOW THIS LINE
+// ------------------------------------------------------
+
+class AuthWrapper extends StatelessWidget {
+  const AuthWrapper({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final authProvider = Provider.of<AuthProvider>(context);
+
+    if (authProvider.user == null) {
+      return const OnboardingScreen();
+    } else {
+      return const HomeScreen();
+    }
   }
 }

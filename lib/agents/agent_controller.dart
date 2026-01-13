@@ -28,13 +28,14 @@ class AgentController {
   /// history format expected: [{"role":"user|assistant","text":"..."}]
   Future<AgentResponse> handleUserMessage(
     String userText, {
-    List<Map<String, String>>? history,
+    required List<Map<String, String>> history,
+    Map<String, dynamic>? dogProfile,
   }) async {
     final agentType = AgentRouter.route(userText);
     final urgentKeyword = AgentRouter.isUrgent(userText);
 
-    late final String systemPrompt;
-    late final String label;
+    String systemPrompt;
+    String label;
 
     switch (agentType) {
       case AgentType.vet:
@@ -52,10 +53,21 @@ class AgentController {
         break;
     }
 
+    // Build dog profile ONCE and use it for BOTH system + user prompt
+    final profileBlock = _formatDogProfile(dogProfile);
+
+    // 1) Inject into SYSTEM prompt (instructions)
+    if (profileBlock.isNotEmpty) {
+      systemPrompt = "$systemPrompt\n\n$profileBlock";
+    }
+
+    // 2) Inject into USER prompt (high-salience context)
     final historyText = _buildHistoryText(history);
+    final profilePrefix = profileBlock.isEmpty ? "" : "$profileBlock\n";
+
     final augmentedUserPrompt = historyText.isEmpty
-        ? userText
-        : "Conversation so far:\n$historyText\n\nNew message:\n$userText";
+        ? "${profilePrefix}New message:\n$userText"
+        : "${profilePrefix}Conversation so far:\n$historyText\n\nNew message:\n$userText";
 
     final raw = await openAIClient.generateText(
       systemPrompt: systemPrompt,
@@ -65,11 +77,22 @@ class AgentController {
     );
 
     if (agentType == AgentType.vet) {
-      final parsed = _safeParseJson(raw);
+      // Expected format: USER_MESSAGE + VET_JSON
+      final split = _splitVetOutput(raw);
+      final parsed = _safeParseJson(split.vetJsonRaw);
+
       if (parsed != null) {
-        final display = _renderVet(parsed);
-        final urgency = (parsed["urgency"] ?? "").toString().toUpperCase();
-        final isUrgent = urgency == "HIGH" || urgentKeyword;
+        final display = split.userMessage.trim().isNotEmpty
+            ? split.userMessage.trim()
+            : _renderVetFromNewJson(parsed);
+
+        final triage = (parsed["triage_level"] ?? "").toString().toUpperCase();
+        final jsonUrgent = parsed["is_urgent"] == true;
+
+        final isUrgent = jsonUrgent ||
+            triage == "EMERGENCY" ||
+            triage == "VET_SOON" ||
+            urgentKeyword;
 
         return AgentResponse(
           agentLabel: label,
@@ -96,12 +119,39 @@ class AgentController {
     );
   }
 
+  // =========================
+  // Dog profile formatting
+  // =========================
+  String _formatDogProfile(Map<String, dynamic>? dogProfile) {
+    if (dogProfile == null || dogProfile.isEmpty) return "";
+
+    final name = (dogProfile["name"] ?? "").toString().trim();
+    final breed = (dogProfile["breed"] ?? "Unknown").toString().trim();
+    final age = (dogProfile["age_years"] ?? "?").toString();
+    final weight = (dogProfile["weight_lbs"] ?? "?").toString();
+    final goal = (dogProfile["goal"] ?? "general health").toString().trim();
+
+    final n = name.isEmpty ? "" : "Name: $name\n";
+
+    return "DOG PROFILE (use this to personalize recommendations):\n"
+        "${n}Breed: $breed\n"
+        "Age (years): $age\n"
+        "Weight (lbs): $weight\n"
+        "Goal: $goal\n";
+  }
+
+  // =========================
+  // History building
+  // =========================
   /// Keep it cheap: only send a short rolling window of chat.
   /// We also strip any "header" lines like "TRAINER (URGENT)\n\n..." that you may prepend in UI.
   String _buildHistoryText(List<Map<String, String>>? history, {int maxItems = 10}) {
     if (history == null || history.isEmpty) return "";
 
-    final recent = history.length <= maxItems ? history : history.sublist(history.length - maxItems);
+    final recent = history.length <= maxItems
+        ? history
+        : history.sublist(history.length - maxItems);
+
     final lines = <String>[];
 
     for (final m in recent) {
@@ -110,42 +160,86 @@ class AgentController {
       var text = (m["text"] ?? "").trim();
       if (text.isEmpty) continue;
 
-      // If your UI prefixes assistant messages with "TRAINER (URGENT)\n\n...",
-      // remove the first line so it doesn't confuse the model.
+      // Remove UI header line if present
       if (role == "Assistant") {
         final parts = text.split("\n");
-        if (parts.isNotEmpty && parts.first.toUpperCase().contains("TRAINER") ||
-            parts.first.toUpperCase().contains("MEAL") ||
-            parts.first.toUpperCase().contains("VET")) {
-          text = parts.skip(1).join("\n").trim();
-          if (text.startsWith("\n")) text = text.trim();
+        if (parts.isNotEmpty) {
+          final first = parts.first.toUpperCase();
+          final looksLikeHeader =
+              first.contains("TRAINER") || first.contains("MEAL") || first.contains("VET");
+          if (looksLikeHeader) {
+            text = parts.skip(1).join("\n").trim();
+          }
         }
       }
 
-      // Keep each line compact
       lines.add("$role: $text");
     }
 
     return lines.join("\n");
   }
 
+  // =========================
+  // Vet output parsing
+  // =========================
+  _VetSplit _splitVetOutput(String raw) {
+    final s = raw.trim();
+
+    String userMsg = "";
+    String jsonPart = "";
+
+    final userMarker = RegExp(r'USER_MESSAGE:\s*', caseSensitive: false);
+    final jsonMarker = RegExp(r'VET_JSON:\s*', caseSensitive: false);
+
+    final userMatch = userMarker.firstMatch(s);
+    final jsonMatch = jsonMarker.firstMatch(s);
+
+    if (jsonMatch != null) {
+      final jsonStart = jsonMatch.end;
+      jsonPart = s.substring(jsonStart).trim();
+
+      if (userMatch != null) {
+        final userStart = userMatch.end;
+        final userEnd = jsonMatch.start;
+        userMsg = s.substring(userStart, userEnd).trim();
+      } else {
+        userMsg = s.substring(0, jsonMatch.start).trim();
+      }
+    } else {
+      final brace = s.indexOf("{");
+      if (brace >= 0) {
+        userMsg = s.substring(0, brace).trim();
+        jsonPart = s.substring(brace).trim();
+      } else {
+        userMsg = s;
+        jsonPart = "";
+      }
+    }
+
+    return _VetSplit(userMessage: userMsg, vetJsonRaw: jsonPart);
+  }
+
   Map<String, dynamic>? _safeParseJson(String s) {
     try {
+      if (s.trim().isEmpty) return null;
+
       final cleaned = s
           .trim()
-          .replaceAll(RegExp(r'^```json'), '')
-          .replaceAll(RegExp(r'^```'), '')
-          .replaceAll(RegExp(r'```$'), '')
+          .replaceAll(RegExp(r'^```json', multiLine: true), '')
+          .replaceAll(RegExp(r'^```', multiLine: true), '')
+          .replaceAll(RegExp(r'```$', multiLine: true), '')
           .trim();
+
       final obj = jsonDecode(cleaned);
       if (obj is Map<String, dynamic>) return obj;
+      if (obj is Map) return obj.cast<String, dynamic>();
       return null;
     } catch (_) {
       return null;
     }
   }
 
-  String _renderVet(Map<String, dynamic> j) {
+  String _renderVetFromNewJson(Map<String, dynamic> j) {
     String list(String key) {
       final v = j[key];
       if (v is List) {
@@ -155,27 +249,24 @@ class AgentController {
     }
 
     return [
-      "## Urgency: ${j["urgency"] ?? "UNKNOWN"}",
+      "Triage: ${j["triage_level"] ?? "UNKNOWN"}",
       "",
-      "## Summary",
-      (j["summary"] ?? "").toString(),
+      "Likely categories:",
+      list("likely_categories"),
       "",
-      "## What this could be",
-      list("what_this_could_be"),
+      "Next steps:",
+      list("next_steps"),
       "",
-      "## Do now",
-      list("do_now"),
+      "Questions to ask:",
+      list("questions_to_ask"),
       "",
-      "## Go to ER if",
-      list("go_to_er_if"),
-      "",
-      "## Questions",
-      list("questions"),
-      "",
-      "## What not to do",
-      list("what_not_to_do"),
-      "",
-      "_${(j["disclaimer"] ?? "").toString()}_",
-    ].join("\n");
+      (j["disclaimer"] ?? "").toString().trim(),
+    ].where((line) => line.trim().isNotEmpty).join("\n");
   }
+}
+
+class _VetSplit {
+  final String userMessage;
+  final String vetJsonRaw;
+  _VetSplit({required this.userMessage, required this.vetJsonRaw});
 }

@@ -10,34 +10,58 @@ class AgentRouter {
     // =========================
     // 1) VET FIRST (safety)
     // =========================
+    // Small mammals (guinea pigs first) hide illness. Appetite/poop changes are time-sensitive.
     const vetKeywords = [
-      // Bloat / GI emergencies
-      "retch", "retching", "dry heave", "dry-heave",
-      "trying to vomit", "nothing comes out",
-      "bloated", "bloat", "gdv",
-      "swollen belly", "belly looks bigger", "distended",
-      "abdomen", "stomach looks bigger",
+      // Appetite / GI red flags (high-signal)
+      "not eating", "won't eat", "wont eat", "refusing food", "stopped eating",
+      "not drinking", "won't drink", "wont drink",
+      "not pooping", "no poop", "no poops", "not pooing", "no droppings",
+      "tiny poop", "tiny poops", "small poop", "small poops",
+      "diarrhea", "runny poop", "watery poop", "soft stool",
+      "constipation",
+      "bloated", "bloat", "swollen belly", "distended",
+      "gas", "gassy", "hard belly", "belly hard",
+      "hunched", "hunched over",
+      "teeth grinding", "tooth grinding",
 
-      // Breathing / collapse / neurological
-      "trouble breathing", "can’t breathe", "can't breathe",
-      "panting heavily", "gasping",
+      // Breathing / collapse / neuro (high-signal)
+      "trouble breathing", "can't breathe", "cant breathe",
+      "open mouth breathing", "open-mouth breathing",
+      "gasping", "wheezing",
       "collapse", "collapsed", "faint", "fainted",
-      "seizure", "seizing",
+      "seizure", "seizing", "tremor", "tremors",
+      "unresponsive",
 
       // Pain / injury
-      "limp", "limping", "yelping", "pain", "hurt", "injury",
+      "limp", "limping", "pain", "hurt", "injury",
+      "won't move", "wont move", "dragging",
       "swelling", "fracture",
 
-      // Illness
-      "vomit", "vomiting", "diarrhea", "bloody", "blood in",
-      "not eating", "refusing food",
-      "lethargic", "weak", "fever",
-      "infection", "ear infection",
-      "rash", "itching", "hot spot",
+      // Dental / mouth issues (make it specific, not just "teeth")
+      "drooling", "slobber", "wet chin",
+      "overgrown incisors", "malocclusion",
+      "dropping food", "can't chew", "cant chew",
+      "choking", "gagging",
 
-      // Toxic ingestion
-      "poison", "toxin", "chocolate", "xylitol",
-      "grapes", "raisins", "rat poison",
+      // Skin / parasites / infections
+      "mites", "lice", "bald spot", "hair loss",
+      "itching", "scratching", "scabs", "crusty",
+      "rash", "wound", "abscess",
+      "eye discharge", "crusty eye", "red eye",
+      "nose discharge", "snot", "sneezing",
+
+      // Blood / urinary
+      "blood", "bleeding", "bloody",
+      "blood in urine", "bloody urine",
+      "can't pee", "cant pee", "not peeing",
+      "painful urination",
+
+      // Toxins / dangerous exposures (remove noisy "ate")
+      "poison", "toxin", "toxic", "ingested",
+      "cleaner", "bleach", "essential oil",
+      "insecticide", "pesticide",
+      "human medicine", "ibuprofen", "acetaminophen", "tylenol",
+      "chocolate", "xylitol",
     ];
 
     for (final k in vetKeywords) {
@@ -45,16 +69,20 @@ class AgentRouter {
     }
 
     // =========================
-    // 2) MEAL
+    // 2) MEAL / NUTRITION
     // =========================
     const mealKeywords = [
       "food", "feed", "feeding", "diet",
-      "kibble", "wet food", "raw",
-      "calorie", "calories",
-      "treat", "treats",
-      "portion", "protein", "fat",
+      "hay", "timothy", "orchard", "meadow hay", "alfalfa",
+      "pellets", "pellet",
+      "vitamin c", "ascorbic",
+      "veggies", "vegetables", "greens",
+      "lettuce", "cilantro", "parsley", "bell pepper",
+      "fruit", "treat", "treats",
+      "portion", "how much", "grams",
       "weight loss", "lose weight",
       "weight gain", "gain weight",
+      "water", "bottle", "bowl",
     ];
 
     for (final k in mealKeywords) {
@@ -62,8 +90,9 @@ class AgentRouter {
     }
 
     // =========================
-    // 3) TRAINER (default)
+    // 3) TRAINER / CARE ROUTINE (default)
     // =========================
+    // Enrichment, bonding, behavior, habitat routines
     return AgentType.trainer;
   }
 
@@ -71,29 +100,41 @@ class AgentRouter {
   static bool isUrgent(String text) {
     final t = text.toLowerCase();
 
+    // Emergency patterns that should "light up" the UI
     const urgentKeywords = [
-      // Immediate emergencies
-      "retch", "retching", "dry heave",
-      "trying to vomit", "nothing comes out",
-      "bloated", "bloat", "gdv",
-      "swollen belly", "distended",
-      "trouble breathing", "can’t breathe", "can't breathe",
+      // GI / appetite emergencies
+      "not eating", "won't eat", "wont eat", "stopped eating",
+      "not pooping", "no poop", "no droppings",
+      "bloated", "bloat", "distended", "swollen belly", "hard belly",
+      "severe diarrhea", "watery poop",
+      "unresponsive",
+
+      // Breathing / collapse / neuro
+      "trouble breathing", "can't breathe", "cant breathe",
+      "open mouth breathing", "gasping",
       "collapse", "collapsed",
       "seizure", "seizing",
 
-      // Poisoning
-      "poison", "toxin", "chocolate",
-      "xylitol", "grapes", "raisins",
-
-      // Severe signs
+      // Blood / critical
       "uncontrolled bleeding",
-      "blue gums", "pale gums",
-      "sudden weakness",
+      "blood in urine", "bloody urine",
+
+      // Poison / toxins
+      "poison", "toxin", "toxic",
+      "bleach", "cleaner", "essential oil",
+      "ibuprofen", "acetaminophen", "tylenol",
+      "xylitol",
     ];
 
     for (final k in urgentKeywords) {
       if (t.contains(k)) return true;
     }
+
+    // Extra high-signal combo: not eating + (not pooping OR hunched OR teeth grinding)
+    final notEating = t.contains("not eating") || t.contains("won't eat") || t.contains("wont eat") || t.contains("stopped eating");
+    final poopOrPain = t.contains("not pooping") || t.contains("no poop") || t.contains("no droppings") || t.contains("hunched") || t.contains("teeth grinding") || t.contains("tooth grinding");
+    if (notEating && poopOrPain) return true;
+
     return false;
   }
 }

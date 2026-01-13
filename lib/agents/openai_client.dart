@@ -1,6 +1,6 @@
+// lib/agents/openai_client.dart
 import 'dart:convert';
 import 'package:http/http.dart' as http;
-import 'prompts.dart';
 
 class OpenAIClient {
   final String apiKey;
@@ -38,9 +38,7 @@ class OpenAIClient {
       "max_output_tokens": maxOutputTokens,
     };
 
-    if (temperature != null) {
-      body["temperature"] = temperature;
-    }
+    if (temperature != null) body["temperature"] = temperature;
 
     final resp = await http.post(
       uri,
@@ -56,8 +54,13 @@ class OpenAIClient {
     }
 
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
-    final output = data["output"];
 
+    // ✅ Prefer the convenience field if present
+    final ot = data["output_text"];
+    if (ot is String && ot.trim().isNotEmpty) return ot.trim();
+
+    // ✅ Fallback: parse output array
+    final output = data["output"];
     if (output is! List) {
       throw Exception("OpenAI response missing output: ${resp.body}");
     }
@@ -67,10 +70,11 @@ class OpenAIClient {
     for (final item in output) {
       if (item is Map && item["content"] is List) {
         for (final c in (item["content"] as List)) {
-          if (c is Map && c["text"] is String) {
+          if (c is Map) {
             final type = c["type"];
-            if (type == "output_text" || type == "text" || type == "refusal") {
-              buffer.write(c["text"] as String);
+            final text = c["text"];
+            if ((type == "output_text" || type == "text") && text is String) {
+              buffer.write(text);
             }
           }
         }
@@ -81,7 +85,7 @@ class OpenAIClient {
     if (text.isEmpty) {
       throw Exception("OpenAI returned empty text: ${resp.body}");
     }
-
     return text;
   }
 }
+

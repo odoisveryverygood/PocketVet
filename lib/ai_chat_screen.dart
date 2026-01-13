@@ -25,19 +25,23 @@ class _AiChatScreenState extends State<AiChatScreen> {
   late final AgentController _agent;
 
   // ===== Premium persistent memory config =====
-  static const String _kPrefChatMessages = 'wf_pro_chat_messages_v1';
+  static const String _kPrefChatMessages = 'pv_pro_chat_messages_v1';
   static const int _kMaxStoredMessages = 50;
 
-  // ===== Premium dog profile (local-only) =====
-  static const String _kPrefDogProfile = 'wf_pro_dog_profile_v1';
+  // ===== Premium pet profile (local-only) =====
+  static const String _kPrefPetProfile = 'pv_pro_pet_profile_v1';
 
   // Default profile (used if nothing saved yet)
-  Map<String, dynamic> dogProfile = {
+  // Guinea pig-first schema:
+  // species, name, age_months, weight_grams, goal, (optional) diet, housing
+  Map<String, dynamic> petProfile = {
+    "species": "Guinea pig",
     "name": "",
-    "breed": "Husky",
-    "age_years": 3,
-    "weight_lbs": 45,
+    "age_months": 8,
+    "weight_grams": 900,
     "goal": "general health",
+    "diet": "Unlimited timothy hay + pellets + leafy greens",
+    "housing": "Indoor cage with hides + daily floor time",
   };
 
   @override
@@ -48,7 +52,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
 
     _loadProMemoryIfEnabled();
-    _loadDogProfileIfEnabled();
+    _loadPetProfileIfEnabled();
   }
 
   // ===============================
@@ -100,13 +104,13 @@ class _AiChatScreenState extends State<AiChatScreen> {
   }
 
   // ===============================
-  // Premium dog profile helpers
+  // Premium pet profile helpers
   // ===============================
-  Future<void> _loadDogProfileIfEnabled() async {
+  Future<void> _loadPetProfileIfEnabled() async {
     if (!ProAccess.isPro) return;
 
     final prefs = await SharedPreferences.getInstance();
-    final stored = prefs.getString(_kPrefDogProfile);
+    final stored = prefs.getString(_kPrefPetProfile);
     if (stored == null || stored.isEmpty) return;
 
     try {
@@ -114,73 +118,90 @@ class _AiChatScreenState extends State<AiChatScreen> {
       if (decoded is Map) {
         if (!mounted) return;
         setState(() {
-          dogProfile = decoded.cast<String, dynamic>();
+          petProfile = decoded.cast<String, dynamic>();
         });
       }
     } catch (_) {}
   }
 
-  Future<void> _saveDogProfileIfEnabled() async {
+  Future<void> _savePetProfileIfEnabled() async {
     if (!ProAccess.isPro) return;
 
     final prefs = await SharedPreferences.getInstance();
     try {
-      await prefs.setString(_kPrefDogProfile, jsonEncode(dogProfile));
+      await prefs.setString(_kPrefPetProfile, jsonEncode(petProfile));
     } catch (_) {}
   }
 
-  Future<void> _clearDogProfile() async {
+  Future<void> _clearPetProfile() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_kPrefDogProfile);
+    await prefs.remove(_kPrefPetProfile);
   }
 
   // ===============================
-  // Dog profile UI (simple dialog)
+  // Pet profile UI (simple dialog)
   // ===============================
-  Future<void> _editDogProfileDialog() async {
+  Future<void> _editPetProfileDialog() async {
     if (!ProAccess.isPro) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Dog Profile is a Pro feature (for now).")),
+        const SnackBar(content: Text("Pet Profile is a Pro feature (for now).")),
       );
       return;
     }
 
-    final nameCtrl = TextEditingController(text: (dogProfile["name"] ?? "").toString());
-    final breedCtrl = TextEditingController(text: (dogProfile["breed"] ?? "").toString());
-    final ageCtrl = TextEditingController(text: (dogProfile["age_years"] ?? "").toString());
-    final weightCtrl = TextEditingController(text: (dogProfile["weight_lbs"] ?? "").toString());
-    final goalCtrl = TextEditingController(text: (dogProfile["goal"] ?? "").toString());
+    final speciesCtrl =
+        TextEditingController(text: (petProfile["species"] ?? "Guinea pig").toString());
+    final nameCtrl = TextEditingController(text: (petProfile["name"] ?? "").toString());
+    final ageCtrl =
+        TextEditingController(text: (petProfile["age_months"] ?? "").toString());
+    final weightCtrl =
+        TextEditingController(text: (petProfile["weight_grams"] ?? "").toString());
+    final goalCtrl = TextEditingController(text: (petProfile["goal"] ?? "").toString());
+    final dietCtrl = TextEditingController(text: (petProfile["diet"] ?? "").toString());
+    final housingCtrl =
+        TextEditingController(text: (petProfile["housing"] ?? "").toString());
 
     final saved = await showDialog<bool>(
       context: context,
       builder: (ctx) {
         return AlertDialog(
-          title: const Text("Edit Dog Profile (Pro)"),
+          title: const Text("Edit Pet Profile (Pro)"),
           content: SingleChildScrollView(
             child: Column(
               children: [
+                TextField(
+                  controller: speciesCtrl,
+                  decoration: const InputDecoration(labelText: "Species (e.g., Guinea pig)"),
+                ),
                 TextField(
                   controller: nameCtrl,
                   decoration: const InputDecoration(labelText: "Name (optional)"),
                 ),
                 TextField(
-                  controller: breedCtrl,
-                  decoration: const InputDecoration(labelText: "Breed"),
-                ),
-                TextField(
                   controller: ageCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Age (years)"),
+                  decoration: const InputDecoration(labelText: "Age (months)"),
                 ),
                 TextField(
                   controller: weightCtrl,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(labelText: "Weight (lbs)"),
+                  decoration: const InputDecoration(labelText: "Weight (grams)"),
                 ),
                 TextField(
                   controller: goalCtrl,
-                  decoration: const InputDecoration(labelText: "Goal (e.g., leaner, endurance)"),
+                  decoration: const InputDecoration(
+                    labelText:
+                        "Goal (bonding / enrichment / weight / stress / habitat / general health)",
+                  ),
+                ),
+                TextField(
+                  controller: dietCtrl,
+                  decoration: const InputDecoration(labelText: "Diet (optional)"),
+                ),
+                TextField(
+                  controller: housingCtrl,
+                  decoration: const InputDecoration(labelText: "Housing (optional)"),
                 ),
               ],
             ),
@@ -200,37 +221,40 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
 
     if (saved == true) {
-      // Parse numbers safely
       final age = int.tryParse(ageCtrl.text.trim());
       final weight = int.tryParse(weightCtrl.text.trim());
 
       setState(() {
-        dogProfile = {
+        petProfile = {
+          "species": speciesCtrl.text.trim().isEmpty ? "Guinea pig" : speciesCtrl.text.trim(),
           "name": nameCtrl.text.trim(),
-          "breed": breedCtrl.text.trim().isEmpty ? "Unknown" : breedCtrl.text.trim(),
-          "age_years": age ?? dogProfile["age_years"] ?? 0,
-          "weight_lbs": weight ?? dogProfile["weight_lbs"] ?? 0,
+          "age_months": age ?? petProfile["age_months"] ?? 0,
+          "weight_grams": weight ?? petProfile["weight_grams"] ?? 0,
           "goal": goalCtrl.text.trim().isEmpty ? "general health" : goalCtrl.text.trim(),
+          "diet": dietCtrl.text.trim().isEmpty ? (petProfile["diet"] ?? "") : dietCtrl.text.trim(),
+          "housing": housingCtrl.text.trim().isEmpty
+              ? (petProfile["housing"] ?? "")
+              : housingCtrl.text.trim(),
         };
       });
 
-      await _saveDogProfileIfEnabled();
+      await _savePetProfileIfEnabled();
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("Saved dog profile (Pro).")),
+        const SnackBar(content: Text("Saved pet profile (Pro).")),
       );
     }
   }
 
   String _profileSummary() {
-    final name = (dogProfile["name"] ?? "").toString().trim();
-    final breed = (dogProfile["breed"] ?? "Unknown").toString();
-    final age = (dogProfile["age_years"] ?? "?").toString();
-    final w = (dogProfile["weight_lbs"] ?? "?").toString();
-    final goal = (dogProfile["goal"] ?? "general health").toString();
+    final species = (petProfile["species"] ?? "Guinea pig").toString();
+    final name = (petProfile["name"] ?? "").toString().trim();
+    final age = (petProfile["age_months"] ?? "?").toString();
+    final w = (petProfile["weight_grams"] ?? "?").toString();
+    final goal = (petProfile["goal"] ?? "general health").toString();
     final n = name.isEmpty ? "" : "$name • ";
-    return "${n}${breed}, ${age}y, ${w}lb • Goal: $goal";
+    return "${n}${species}, ${age}mo, ${w}g • Goal: $goal";
   }
 
   // ===============================
@@ -249,12 +273,11 @@ class _AiChatScreenState extends State<AiChatScreen> {
     await _saveProMemoryIfEnabled();
 
     try {
-      // If your AgentController supports dogProfile, use it.
-      // If it does NOT, the fallback still works and we can wire it next.
       final resp = await _agent.handleUserMessage(
         msg,
         history: _messages,
-        dogProfile: dogProfile, // <-- If this errors, tell me; we'll adapt.
+        petProfile: petProfile, // ✅ updated key (matches AgentController)
+        // coachMemory: ... (optional, later)
       );
 
       setState(() {
@@ -291,7 +314,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("WoofFit AI"),
+        title: const Text("PocketVet AI"),
         actions: [
           Center(
             child: Padding(
@@ -303,9 +326,9 @@ class _AiChatScreenState extends State<AiChatScreen> {
             ),
           ),
           IconButton(
-            tooltip: "Edit Dog Profile",
+            tooltip: "Edit Pet Profile",
             icon: const Icon(Icons.pets_outlined),
-            onPressed: _editDogProfileDialog,
+            onPressed: _editPetProfileDialog,
           ),
           IconButton(
             tooltip: ProAccess.isPro ? 'Pro ON' : 'Pro OFF',
@@ -319,7 +342,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
 
               if (ProAccess.isPro) {
                 await _loadProMemoryIfEnabled();
-                await _loadDogProfileIfEnabled();
+                await _loadPetProfileIfEnabled();
               }
             },
           ),
@@ -328,7 +351,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
             icon: const Icon(Icons.save_outlined),
             onPressed: () async {
               await _saveProMemoryIfEnabled();
-              await _saveDogProfileIfEnabled();
+              await _savePetProfileIfEnabled();
               if (!mounted) return;
               ScaffoldMessenger.of(context).showSnackBar(
                 SnackBar(
@@ -346,7 +369,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
             icon: const Icon(Icons.delete_outline),
             onPressed: () async {
               await _clearProMemory();
-              await _clearDogProfile();
+              await _clearPetProfile();
               if (!mounted) return;
               setState(() {
                 _messages.clear();
@@ -364,17 +387,16 @@ class _AiChatScreenState extends State<AiChatScreen> {
           Container(
             width: double.infinity,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            decoration: BoxDecoration(
+            decoration: const BoxDecoration(
               border: Border(bottom: BorderSide(color: Colors.black12)),
             ),
             child: Text(
               ProAccess.isPro
-                  ? "Dog Profile (Pro): ${_profileSummary()}"
-                  : "Dog Profile: (Pro feature — toggle PRO to persist profile)",
+                  ? "Pet Profile (Pro): ${_profileSummary()}"
+                  : "Pet Profile: (Pro feature — toggle PRO to persist profile)",
               style: const TextStyle(fontSize: 13),
             ),
           ),
-
           Expanded(
             child: ListView.builder(
               padding: const EdgeInsets.all(12),
@@ -397,7 +419,6 @@ class _AiChatScreenState extends State<AiChatScreen> {
               },
             ),
           ),
-
           Padding(
             padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
             child: Row(
@@ -409,7 +430,7 @@ class _AiChatScreenState extends State<AiChatScreen> {
                     maxLines: 4,
                     onSubmitted: (_) => _send(),
                     decoration: const InputDecoration(
-                      hintText: "Ask about exercise, meals, or symptoms…",
+                      hintText: "Ask about diet, behavior, habitat, or symptoms…",
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -427,4 +448,5 @@ class _AiChatScreenState extends State<AiChatScreen> {
     );
   }
 }
+
 

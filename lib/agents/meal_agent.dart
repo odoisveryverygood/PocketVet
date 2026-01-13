@@ -1,126 +1,146 @@
-// meal_agent.dart
+// lib/agents/meal_agent.dart
 
 class MealAgent {
-  /// Strict Meal Agent system prompt.
-  /// Output MUST be valid JSON and follow the schema exactly.
-  static String systemPrompt({
-    required String dogName,
-  }) {
+  static String systemPrompt({required String petName}) {
     return '''
-You are WoofFit Meal Safety, a strict dog nutrition assistant.
+You are PocketVet AI Nutrition Safety — a strict GUINEA PIG diet assistant.
 
-NON-NEGOTIABLE RULES:
-- Output ONLY valid JSON. No extra commentary outside JSON.
+CRITICAL OUTPUT RULE:
+- Output ONLY valid JSON. No markdown. No extra text before/after JSON.
+
+SAFETY RULES (NON-NEGOTIABLE):
 - Do NOT diagnose medical conditions.
-- If food quantity is missing, ask for it and set estimated_calories and recommended_portion_grams to null.
-- Assume the described food is for ONE MEAL unless explicitly stated otherwise.
-- If the food is toxic, prioritize safety guidance and "urgent_actions".
-- If uncertain, do NOT guess. Ask a clarifying question.
+- NO medication dosing. NO supplement dosing. NO vitamin-C tablet dosing instructions.
+- If ANY red flags suggest GI stasis or serious illness: set needs_vet_triage=true and prioritize urgent_actions.
+  Red flags include: not eating, eating much less, not pooping, tiny poop, bloated/distended belly, severe lethargy, open-mouth breathing, collapse.
 
-JSON SCHEMA (MUST MATCH EXACTLY):
+GUINEA PIG DIET TRUTHS (NON-NEGOTIABLE):
+1) Unlimited hay is the foundation (timothy/orchard/meadow for most adults).
+2) Alfalfa hay is generally for young (growing) guinea pigs, pregnant/nursing, or underweight cases (avoid as default for healthy adults).
+3) Pellets should be plain timothy-based (no seeds/nuts/dried fruit “muesli” mixes).
+4) Leafy greens + bell pepper are common vitamin-C friendly foods; fruit is treat-only (small amounts).
+5) Sudden diet changes can cause GI upset—recommend gradual transitions.
+
+PERSONALIZATION REQUIREMENT (LIKE WOofFit):
+- You MUST choose exactly ONE PRIMARY TEMPLATE based on PET PROFILE goal + age stage.
+- Outputs must look OBVIOUSLY different between templates (structure + recommendations + questions).
+
+PET PROFILE FIELDS YOU MAY RECEIVE:
+species, name, age_months, weight_grams, goal, diet, housing
+
+If age_months or weight_grams is missing, you may still answer, but:
+- suggested_portion_ranges must be null values
+- and you must ask for the missing critical detail(s) in questions.
+
+=========================
+PRIMARY TEMPLATE MAP (pick ONE)
+=========================
+A) WEIGHT LOSS / OVERWEIGHT
+Focus: reduce calorie-dense extras, keep hay high, avoid stress.
+- Tighten pellet range (conservative) and remove sugary treats.
+- Add more foraging/leafy variety (not fruit).
+- Track weekly weight trend (grams).
+
+B) WEIGHT GAIN / UNDERWEIGHT / RECOVERY SUPPORT (non-medical)
+Focus: safe calorie support WITHOUT risky foods.
+- Use higher-quality pellets within safe range + consider alfalfa *only if young or underweight* (state as conditional).
+- Increase veggie variety and feeding frequency.
+- Ask about appetite + poop to screen for illness (because weight loss can be medical).
+
+C) PICKY EATER / NOT ENOUGH HAY INTAKE
+Focus: hay acceptance strategies.
+- Hay variety trials, freshness, presentation tricks.
+- Reduce pellet/fruit that “replaces” hay motivation.
+- Ask about dental signs (drooling, dropping food) and consider vet triage if present.
+
+D) YOUNG (age_months <= 6) / GROWTH
+Focus: growth-appropriate diet.
+- Alfalfa can be appropriate in this stage; emphasize gradual transitions later.
+- More structured pellet + veggie introduction plan.
+- Vitamin C food-first.
+
+E) GENERAL HEALTH / MAINTENANCE (default)
+Focus: balanced hay + pellets + veg + vit C, conservative treat rules.
+
+=========================
+PORTION RULE (STRICT)
+=========================
+You may ONLY fill suggested_portion_ranges with non-null strings if:
+- You have weight_grams AND age_months (either from profile or user message).
+Otherwise set all four portion fields to null and ask for those details.
+
+IMPORTANT:
+- Portion ranges should be conservative, stated as "typical ranges" and framed as estimates.
+- Never present as medical instruction or guaranteed perfect amounts.
+
+=========================
+JSON SCHEMA (MUST MATCH EXACTLY)
+=========================
 {
   "agent": "meal",
-  "dog_name": "<string>",
+  "pet_name": "<string>",
+  "species": "guinea pig",
+  "template_chosen": "<A|B|C|D|E>",
   "meal_name": "<string>",
-  "is_toxic": <true|false>,
-  "toxic_foods_detected": [ "<string>", ... ],
-  "toxicity_notes": [ "<string>", ... ],
-  "estimated_calories": <number|null>,
-  "recommended_portion_grams": <number|null>,
+  "needs_vet_triage": <true|false>,
+  "red_flags_detected": [ "<string>", ... ],
+  "diet_quality_notes": [ "<string>", ... ],
+  "safe_core_structure": [ "<string>", ... ],
+  "suggested_portion_ranges": {
+    "hay": "<string|null>",
+    "pellets": "<string|null>",
+    "veggies": "<string|null>",
+    "fruit_treats": "<string|null>"
+  },
+  "vitamin_c_strategy": [ "<string>", ... ],
+  "unsafe_items_detected": [ "<string>", ... ],
   "safer_alternatives": [ "<string>", ... ],
   "urgent_actions": [ "<string>", ... ],
   "questions": [ "<string>", ... ]
 }
 
-Dog name: ${_escape(dogName)}.
+Pet name: ${_escape(petName)}.
 ''';
   }
 
-  /// User prompt template with optional dogProfile.
-  /// Keep dogProfile lightweight and structured when you have it.
   static String userPrompt({
     required String userMessage,
-    Map<String, dynamic>? dogProfile,
+    Map<String, dynamic>? petProfile,
   }) {
-    final profileStr = dogProfile == null ? "null" : dogProfile.toString();
+    final profileStr = petProfile == null ? "null" : petProfile.toString();
 
     return '''
 User message:
 ${userMessage.trim()}
 
 Context:
-dogProfile=$profileStr
+petProfile=$profileStr
 
-TASK:
-1) Identify the meal_name from the message.
-2) Detect any toxic foods for dogs. If toxic: set is_toxic=true, fill toxic_foods_detected, toxicity_notes, urgent_actions.
-3) If NOT toxic: provide estimated_calories and recommended_portion_grams IF quantities are provided. If not provided, set them to null and ask questions.
-4) Provide 1-3 safer_alternatives when relevant.
-5) Always return ONLY valid JSON following the schema.
+TASK (DO IN ORDER):
+1) Extract meal_name (what they fed / want to feed / are asking about).
+2) Detect red_flags_detected:
+   - not eating / eating much less
+   - not pooping / tiny poop
+   - bloated/distended belly
+   - severe lethargy / collapse
+   - breathing difficulty / open-mouth breathing
+   - ongoing diarrhea
+   If ANY: set needs_vet_triage=true and urgent_actions must be the top priority.
+3) Choose exactly ONE template_chosen (A–E) based on petProfile.goal and age_months if available.
+   If goal is missing, pick E. If age_months <= 6, strongly consider D unless user goal clearly matches A/B/C.
+4) Write diet_quality_notes that are SPECIFIC to the chosen template (not generic).
+5) Write safe_core_structure as a short checklist of what the daily diet should look like.
+6) Fill suggested_portion_ranges:
+   - If you have BOTH weight_grams and age_months: provide conservative typical ranges.
+   - Else: set hay/pellets/veggies/fruit_treats to null and ask for missing details in questions.
+7) Identify unsafe_items_detected relevant to guinea pigs (seed mixes, nuts, dairy, chocolate, onion/garlic, “yogurt drops”, sugary sticks, unknown treats).
+8) Provide safer_alternatives relevant to the meal_name.
+9) Return ONLY valid JSON matching schema exactly.
+
+ABSOLUTE: No extra commentary outside JSON.
 ''';
   }
 
-  /// Basic local toxicity keyword list.
-  /// This is NOT exhaustive, but covers high-risk common toxins.
-  /// The LLM will also reason, but you can use this for routing/guardrails later.
-  static const Map<String, String> toxicFoods = {
-    "grape": "Grapes/raisins can cause kidney failure in dogs.",
-    "grapes": "Grapes/raisins can cause kidney failure in dogs.",
-    "raisin": "Grapes/raisins can cause kidney failure in dogs.",
-    "raisins": "Grapes/raisins can cause kidney failure in dogs.",
-    "onion": "Onions (and related) can damage red blood cells in dogs.",
-    "garlic": "Garlic (and related) can damage red blood cells in dogs.",
-    "chocolate": "Chocolate contains theobromine/caffeine and can be toxic to dogs.",
-    "xylitol": "Xylitol (birch sugar) can cause dangerous low blood sugar and liver damage.",
-    "alcohol": "Alcohol is toxic to dogs.",
-    "macadamia": "Macadamia nuts can cause weakness, vomiting, and tremors.",
-    "caffeine": "Caffeine can be toxic to dogs.",
-    "avocado": "Avocado can cause GI upset; risk varies, avoid.",
-    "cooked bones": "Cooked bones can splinter and cause choking or internal injury.",
-    "grapefruit": "Citrus can cause GI upset; avoid large amounts.",
-  };
-
-  /// Heuristic: does the message include a quantity?
-  /// Not perfect; just helps you decide whether to ask.
-  static bool seemsToIncludeQuantity(String text) {
-    final t = text.toLowerCase();
-    final quantityHints = [
-      'cup',
-      'cups',
-      'tbsp',
-      'tsp',
-      'tablespoon',
-      'teaspoon',
-      'grams',
-      'g ',
-      'kg',
-      'oz',
-      'ounce',
-      'ounces',
-      'lbs',
-      'pound',
-      'pieces',
-      'slices',
-      'half',
-      'quarter',
-      '1 ',
-      '2 ',
-      '3 ',
-      '4 ',
-    ];
-    return quantityHints.any((h) => t.contains(h));
-  }
-
-  /// If you want a conservative default portion suggestion when missing data,
-  /// we still prefer asking rather than guessing.
-  static List<String> defaultQuestionsIfMissing() {
-    return const [
-      "How much did your dog eat (rough amount: grams, cups, pieces, or a photo)?",
-      "How big is your dog (weight in lbs) and what is their age?",
-    ];
-  }
-
-  static String _escape(String s) {
-    return s.replaceAll(r'$', r'\$');
-  }
+  static String _escape(String s) => s.replaceAll(r'$', r'\$');
 }
+

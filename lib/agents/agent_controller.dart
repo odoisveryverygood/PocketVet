@@ -2,20 +2,23 @@
 import 'dart:convert';
 
 import 'agent_router.dart';
+import 'coach_memory.dart';
+import 'meal_agent.dart';
+import 'vet_agent.dart';
 import 'openai_client.dart';
 import 'prompts.dart';
 
 class AgentResponse {
-  final String agentLabel; // "TRAINER" / "MEAL" / "VET"
+  final String agentLabel; // TRAINER / MEAL / VET
   final bool isUrgent;
   final String text; // displayable text
-  final Map<String, dynamic>? vetJson; // only for vet
+  final Map<String, dynamic>? json; // meal/vet structured output
 
   AgentResponse({
     required this.agentLabel,
     required this.isUrgent,
     required this.text,
-    this.vetJson,
+    this.json,
   });
 }
 
@@ -24,143 +27,188 @@ class AgentController {
 
   AgentController({required this.openAIClient});
 
-  /// Pass `history` from your UI (_messages) so the model can remember context.
-  /// history format expected: [{"role":"user|assistant","text":"..."}]
   Future<AgentResponse> handleUserMessage(
     String userText, {
     required List<Map<String, String>> history,
-    Map<String, dynamic>? dogProfile,
+    Map<String, dynamic>? petProfile,
+    CoachMemory? coachMemory,
   }) async {
     final agentType = AgentRouter.route(userText);
     final urgentKeyword = AgentRouter.isUrgent(userText);
 
-    String systemPrompt;
-    String label;
-
-    switch (agentType) {
-      case AgentType.vet:
-        systemPrompt = AgentPrompts.vetSystem;
-        label = "VET";
-        break;
-      case AgentType.meal:
-        systemPrompt = AgentPrompts.mealSystem;
-        label = "MEAL";
-        break;
-      case AgentType.trainer:
-      default:
-        systemPrompt = AgentPrompts.trainerSystem;
-        label = "TRAINER";
-        break;
-    }
-
-    // Build dog profile ONCE and use it for BOTH system + user prompt
-    final profileBlock = _formatDogProfile(dogProfile);
-
-    // 1) Inject into SYSTEM prompt (instructions)
-    if (profileBlock.isNotEmpty) {
-      systemPrompt = "$systemPrompt\n\n$profileBlock";
-    }
-
-    // 2) Inject into USER prompt (high-salience context)
+    // Build shared context once
+    final profileBlock = _formatPetProfile(petProfile);
     final historyText = _buildHistoryText(history);
-    final profilePrefix = profileBlock.isEmpty ? "" : "$profileBlock\n";
 
-    final augmentedUserPrompt = historyText.isEmpty
-        ? "${profilePrefix}New message:\n$userText"
-        : "${profilePrefix}Conversation so far:\n$historyText\n\nNew message:\n$userText";
+    // =========================
+    // TRAINER (human readable)
+    // =========================
+    if (agentType == AgentType.trainer) {
+      var systemPrompt = AgentPrompts.trainerSystem;
+      if (profileBlock.isNotEmpty) {
+        systemPrompt = "$systemPrompt\n\n$profileBlock";
+      }
+
+      final coachBlock =
+          (coachMemory != null && coachMemory.hasSignal)
+              ? "COACH MEMORY (use to adapt future plans):\n${coachMemory.summarize()}\n"
+              : "";
+
+      final prefix = [
+        if (profileBlock.isNotEmpty) profileBlock,
+        if (coachBlock.isNotEmpty) coachBlock,
+      ].join("\n");
+
+      final userPrompt = historyText.isEmpty
+          ? "${prefix}New message:\n$userText"
+          : "${prefix}Conversation so far:\n$historyText\n\nNew message:\n$userText";
+
+      final raw = await openAIClient.generateText(
+        systemPrompt: systemPrompt,
+        userPrompt: userPrompt,
+        maxOutputTokens: 800,
+        temperature: 0.6,
+      );
+
+      return AgentResponse(
+        agentLabel: "TRAINER",
+        isUrgent: urgentKeyword,
+        text: raw,
+        json: null,
+      );
+    }
+
+    // =========================
+    // MEAL (STRICT JSON)
+    // =========================
+    if (agentType == AgentType.meal) {
+      final petName = (petProfile?["name"] ?? "").toString().trim();
+      final nameForPrompt = petName.isEmpty ? "your guinea pig" : petName;
+
+      final systemPrompt = MealAgent.systemPrompt(petName: nameForPrompt);
+      final userPrompt = MealAgent.userPrompt(
+        userMessage: _wrapWithContext(userText, historyText, profileBlock),
+        petProfile: petProfile,
+      );
+
+      final raw = await openAIClient.generateText(
+        systemPrompt: systemPrompt,
+        userPrompt: userPrompt,
+        maxOutputTokens: 700,
+        temperature: 0.2,
+      );
+
+      final parsed = _safeParseJson(raw);
+      if (parsed == null) {
+        return AgentResponse(
+          agentLabel: "MEAL",
+          isUrgent: urgentKeyword,
+          text: raw,
+          json: null,
+        );
+      }
+
+      final display = _renderMealJson(parsed);
+      final needsVet = parsed["needs_vet_triage"] == true;
+
+      return AgentResponse(
+        agentLabel: "MEAL",
+        isUrgent: needsVet || urgentKeyword,
+        text: display,
+        json: parsed,
+      );
+    }
+
+    // =========================
+    // VET (STRICT JSON)
+    // =========================
+    final petName = (petProfile?["name"] ?? "").toString().trim();
+    final nameForPrompt = petName.isEmpty ? "your guinea pig" : petName;
+
+    final systemPrompt = VetAgent.systemPrompt(petName: nameForPrompt);
+    final userPrompt = VetAgent.userPrompt(
+      userMessage: _wrapWithContext(userText, historyText, profileBlock),
+      petProfile: petProfile,
+    );
 
     final raw = await openAIClient.generateText(
       systemPrompt: systemPrompt,
-      userPrompt: augmentedUserPrompt,
-      maxOutputTokens: agentType == AgentType.vet ? 900 : 700,
-      temperature: agentType == AgentType.vet ? 0.2 : 0.6,
+      userPrompt: userPrompt,
+      maxOutputTokens: 750,
+      temperature: 0.2,
     );
 
-    if (agentType == AgentType.vet) {
-      // Expected format: USER_MESSAGE + VET_JSON
-      final split = _splitVetOutput(raw);
-      final parsed = _safeParseJson(split.vetJsonRaw);
-
-      if (parsed != null) {
-        final display = split.userMessage.trim().isNotEmpty
-            ? split.userMessage.trim()
-            : _renderVetFromNewJson(parsed);
-
-        final triage = (parsed["triage_level"] ?? "").toString().toUpperCase();
-        final jsonUrgent = parsed["is_urgent"] == true;
-
-        final isUrgent = jsonUrgent ||
-            triage == "EMERGENCY" ||
-            triage == "VET_SOON" ||
-            urgentKeyword;
-
-        return AgentResponse(
-          agentLabel: label,
-          isUrgent: isUrgent,
-          text: display,
-          vetJson: parsed,
-        );
-      } else {
-        // fallback if model returns non-JSON
-        return AgentResponse(
-          agentLabel: label,
-          isUrgent: urgentKeyword,
-          text: raw,
-          vetJson: null,
-        );
-      }
+    final parsed = _safeParseJson(raw);
+    if (parsed == null) {
+      return AgentResponse(
+        agentLabel: "VET",
+        isUrgent: true,
+        text: raw,
+        json: null,
+      );
     }
 
+    final triage = (parsed["triage_level"] ?? "VET_SOON").toString().toUpperCase();
+    final jsonUrgent = parsed["is_urgent"] == true;
+    final isUrgent =
+        jsonUrgent || triage == "EMERGENCY" || triage == "VET_SOON" || urgentKeyword;
+
+    final display = _renderVetJson(parsed);
+
     return AgentResponse(
-      agentLabel: label,
-      isUrgent: urgentKeyword,
-      text: raw,
-      vetJson: null,
+      agentLabel: "VET",
+      isUrgent: isUrgent,
+      text: display,
+      json: parsed,
     );
   }
 
-  // =========================
-  // Dog profile formatting
-  // =========================
-  String _formatDogProfile(Map<String, dynamic>? dogProfile) {
-    if (dogProfile == null || dogProfile.isEmpty) return "";
-
-    final name = (dogProfile["name"] ?? "").toString().trim();
-    final breed = (dogProfile["breed"] ?? "Unknown").toString().trim();
-    final age = (dogProfile["age_years"] ?? "?").toString();
-    final weight = (dogProfile["weight_lbs"] ?? "?").toString();
-    final goal = (dogProfile["goal"] ?? "general health").toString().trim();
-
-    final n = name.isEmpty ? "" : "Name: $name\n";
-
-    return "DOG PROFILE (use this to personalize recommendations):\n"
-        "${n}Breed: $breed\n"
-        "Age (years): $age\n"
-        "Weight (lbs): $weight\n"
-        "Goal: $goal\n";
+  // -------------------------
+  // Helpers
+  // -------------------------
+  String _wrapWithContext(String userText, String historyText, String profileBlock) {
+    final pieces = <String>[];
+    if (profileBlock.isNotEmpty) pieces.add(profileBlock.trim());
+    if (historyText.isNotEmpty) pieces.add("Conversation so far:\n$historyText");
+    pieces.add("New message:\n$userText");
+    return pieces.join("\n\n");
   }
 
-  // =========================
-  // History building
-  // =========================
-  /// Keep it cheap: only send a short rolling window of chat.
-  /// We also strip any "header" lines like "TRAINER (URGENT)\n\n..." that you may prepend in UI.
+  String _formatPetProfile(Map<String, dynamic>? petProfile) {
+    if (petProfile == null || petProfile.isEmpty) return "";
+
+    final species = (petProfile["species"] ?? "Guinea pig").toString();
+    final name = (petProfile["name"] ?? "").toString();
+    final age = (petProfile["age_months"] ?? "?").toString();
+    final weight = (petProfile["weight_grams"] ?? "?").toString();
+    final goal = (petProfile["goal"] ?? "general health").toString();
+    final diet = (petProfile["diet"] ?? "").toString();
+    final housing = (petProfile["housing"] ?? "").toString();
+
+    return """
+PET PROFILE (small mammal — use strictly):
+Species: $species
+Name: $name
+Age (months): $age
+Weight (grams): $weight
+Goal: $goal
+Diet: $diet
+Housing: $housing
+""";
+  }
+
   String _buildHistoryText(List<Map<String, String>>? history, {int maxItems = 10}) {
     if (history == null || history.isEmpty) return "";
-
-    final recent = history.length <= maxItems
-        ? history
-        : history.sublist(history.length - maxItems);
+    final recent =
+        history.length <= maxItems ? history : history.sublist(history.length - maxItems);
 
     final lines = <String>[];
-
     for (final m in recent) {
-      final roleRaw = (m["role"] ?? "").toLowerCase();
-      final role = roleRaw == "user" ? "User" : "Assistant";
+      final role = (m["role"] ?? "").toLowerCase() == "user" ? "User" : "Assistant";
       var text = (m["text"] ?? "").trim();
       if (text.isEmpty) continue;
 
-      // Remove UI header line if present
+      // Strip header lines like "TRAINER (URGENT)"
       if (role == "Assistant") {
         final parts = text.split("\n");
         if (parts.isNotEmpty) {
@@ -175,60 +223,24 @@ class AgentController {
 
       lines.add("$role: $text");
     }
-
     return lines.join("\n");
-  }
-
-  // =========================
-  // Vet output parsing
-  // =========================
-  _VetSplit _splitVetOutput(String raw) {
-    final s = raw.trim();
-
-    String userMsg = "";
-    String jsonPart = "";
-
-    final userMarker = RegExp(r'USER_MESSAGE:\s*', caseSensitive: false);
-    final jsonMarker = RegExp(r'VET_JSON:\s*', caseSensitive: false);
-
-    final userMatch = userMarker.firstMatch(s);
-    final jsonMatch = jsonMarker.firstMatch(s);
-
-    if (jsonMatch != null) {
-      final jsonStart = jsonMatch.end;
-      jsonPart = s.substring(jsonStart).trim();
-
-      if (userMatch != null) {
-        final userStart = userMatch.end;
-        final userEnd = jsonMatch.start;
-        userMsg = s.substring(userStart, userEnd).trim();
-      } else {
-        userMsg = s.substring(0, jsonMatch.start).trim();
-      }
-    } else {
-      final brace = s.indexOf("{");
-      if (brace >= 0) {
-        userMsg = s.substring(0, brace).trim();
-        jsonPart = s.substring(brace).trim();
-      } else {
-        userMsg = s;
-        jsonPart = "";
-      }
-    }
-
-    return _VetSplit(userMessage: userMsg, vetJsonRaw: jsonPart);
   }
 
   Map<String, dynamic>? _safeParseJson(String s) {
     try {
-      if (s.trim().isEmpty) return null;
+      var cleaned = s.trim();
 
-      final cleaned = s
-          .trim()
+      cleaned = cleaned
           .replaceAll(RegExp(r'^```json', multiLine: true), '')
           .replaceAll(RegExp(r'^```', multiLine: true), '')
           .replaceAll(RegExp(r'```$', multiLine: true), '')
           .trim();
+
+      final firstBrace = cleaned.indexOf('{');
+      final lastBrace = cleaned.lastIndexOf('}');
+      if (firstBrace >= 0 && lastBrace > firstBrace) {
+        cleaned = cleaned.substring(firstBrace, lastBrace + 1);
+      }
 
       final obj = jsonDecode(cleaned);
       if (obj is Map<String, dynamic>) return obj;
@@ -239,34 +251,54 @@ class AgentController {
     }
   }
 
-  String _renderVetFromNewJson(Map<String, dynamic> j) {
+  String _renderMealJson(Map<String, dynamic> j) {
     String list(String key) {
       final v = j[key];
-      if (v is List) {
-        return v.map((e) => "- ${e.toString()}").join("\n");
-      }
+      if (v is List) return v.map((e) => "- ${e.toString()}").join("\n");
+      return "- (none)";
+    }
+
+    String portion(String k) {
+      final v = (j["suggested_portion_ranges"] is Map)
+          ? (j["suggested_portion_ranges"] as Map)[k]
+          : null;
+      if (v == null) return "—";
+      return v.toString();
+    }
+
+    return [
+      "Meal: ${j["meal_name"] ?? "Unknown"}",
+      if (j["needs_vet_triage"] == true)
+        "\n⚠️ This may need vet triage (possible GI stasis risk).",
+      "\nDiet quality notes:\n${list("diet_quality_notes")}",
+      "\nSafe core structure:\n${list("safe_core_structure")}",
+      "\nSuggested portions (conservative):",
+      "- Hay: ${portion("hay")}",
+      "- Pellets: ${portion("pellets")}",
+      "- Veggies: ${portion("veggies")}",
+      "- Fruit treats: ${portion("fruit_treats")}",
+      "\nVitamin C strategy:\n${list("vitamin_c_strategy")}",
+      "\nUnsafe items detected:\n${list("unsafe_items_detected")}",
+      "\nSafer alternatives:\n${list("safer_alternatives")}",
+      "\nUrgent actions:\n${list("urgent_actions")}",
+      "\nQuestions:\n${list("questions")}",
+    ].join("\n");
+  }
+
+  String _renderVetJson(Map<String, dynamic> j) {
+    String list(String key) {
+      final v = j[key];
+      if (v is List) return v.map((e) => "- ${e.toString()}").join("\n");
       return "- (none)";
     }
 
     return [
-      "Triage: ${j["triage_level"] ?? "UNKNOWN"}",
-      "",
-      "Likely categories:",
-      list("likely_categories"),
-      "",
-      "Next steps:",
-      list("next_steps"),
-      "",
-      "Questions to ask:",
-      list("questions_to_ask"),
-      "",
-      (j["disclaimer"] ?? "").toString().trim(),
-    ].where((line) => line.trim().isNotEmpty).join("\n");
+      "Triage: ${j["triage_level"] ?? "VET_SOON"}",
+      "\nRed flags:\n${list("red_flags_detected")}",
+      "\nLikely categories:\n${list("likely_categories")}",
+      "\nNext steps:\n${list("next_steps")}",
+      "\nQuestions to ask:\n${list("questions_to_ask")}",
+      "\n${(j["disclaimer"] ?? "").toString()}",
+    ].join("\n");
   }
-}
-
-class _VetSplit {
-  final String userMessage;
-  final String vetJsonRaw;
-  _VetSplit({required this.userMessage, required this.vetJsonRaw});
 }

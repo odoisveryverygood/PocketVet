@@ -1,39 +1,50 @@
-WoofFit AI — Evaluating Personalization vs. Rule-Based Recommendations
+PocketVet — Evaluating Personalization vs. Rule-Based Care Recommendations
 Research Question
 
-Does lightweight AI-driven personalization measurably improve user engagement compared to static, rule-based recommendations in a consumer health application?
+Does lightweight, agent-level personalization meaningfully improve user engagement compared to static, rule-based recommendations in a consumer animal-health application?
 
-This study evaluates whether adaptive agent behavior—without model training or fine-tuning—can generate meaningful engagement gains over a traditional baseline approach.
+This evaluation tests whether adaptive agent behavior—without model training or fine-tuning— can deliver measurable engagement gains over a strong rule-based baseline.
 
-Why This Matters (Product & Business Lens)
+Why This Matters (Product & Business Perspective)
 
-In consumer subscription products, engagement is a leading indicator of retention, habit formation, and lifetime value (LTV).
+In consumer subscription products—especially health-adjacent tools—engagement is a leading indicator of:
 
-If personalization increases engagement:
+Retention and habit formation
 
-Users are more likely to return regularly
+User trust and perceived reliability
 
-Trust in the product increases
+Conversion to paid features and long-term LTV
 
-Conversion to paid features becomes more defensible
+Personalization is often assumed to be valuable by default. This experiment challenges that assumption.
 
-If it does not increase engagement, it signals that:
+If personalization improves engagement:
 
-Personalization may be unnecessary at early stages, or
+It justifies added system complexity
 
-The implementation adds complexity without clear ROI
+It supports premium feature gating
+
+It strengthens defensibility of AI-driven features
+
+If it does not:
+
+A strong baseline may be sufficient early on
+
+AI complexity may introduce cost without ROI
+
+Product focus should shift toward clarity, safety, and reliability
 
 This evaluation is designed to inform product strategy, not just technical performance.
 
 Experimental Design
 
-We compare two recommendation strategies under controlled conditions.
+Two recommendation strategies were compared under controlled conditions.
 
 1) Baseline Recommender (Rule-Based)
 
-Uses static heuristics (e.g., breed category, general activity level)
+Uses static heuristics derived from domain knowledge
+(e.g., species, general care needs, environment)
 
-Produces the same recommendation pattern for similar users
+Produces consistent recommendations for similar profiles
 
 Does not adapt based on interaction history
 
@@ -41,15 +52,15 @@ Represents a low-cost, industry-standard starting point
 
 2) Personalized Recommender (Adaptive Agent)
 
-Maintains lightweight user preference weights
+Maintains lightweight preference weights
 
-Updates recommendations based on observed click behavior
+Adjusts recommendations based on observed click behavior
 
 Does not train or fine-tune a model
 
 Uses prompt-level adaptation and contextual memory
 
-Designed to reflect a realistic early-stage AI product approach
+Reflects a realistic early-stage AI product implementation
 
 Data
 
@@ -57,14 +68,12 @@ Fully synthetic users and interactions
 
 Controlled environment to isolate the effect of personalization
 
-Eliminates confounding variables such as UI bias, marketing effects, or user churn
+Removes confounders such as UI bias, marketing effects, or churn
 
-Prioritizes directional insight over absolute performance
+The goal is directional insight, not absolute performance claims.
 
 Evaluation Metric
-
 Click-Through Rate (CTR)
-
 𝐶
 𝑇
 𝑅
@@ -93,43 +102,43 @@ Personalized CTR:   0.1025
 
 
 Key observation:
-Personalization did not outperform the baseline in this controlled setting.
+The personalized agent did not outperform the rule-based baseline in this setting.
 
 Interpretation
 
-This result is both realistic and informative:
+This outcome is both realistic and informative:
 
-Personalization does not automatically guarantee higher engagement
+Personalization does not automatically increase engagement
 
-Lightweight adaptive logic may require:
+Lightweight adaptation may require:
 
 More interaction history
 
-Better feature signals
+Better behavioral signals
 
-Stronger alignment between recommendations and user goals
+Tighter alignment between recommendations and user intent
 
 A strong baseline can be competitive early in a product’s lifecycle
 
-From a product perspective, this suggests:
+From a product standpoint:
 
 Personalization should be introduced selectively
 
-Complexity must be justified by measurable gains
+Complexity must earn its keep through measurable gains
 
-Baselines matter — and should not be dismissed
+Baselines matter—and should not be dismissed
 
 Product Implications
 
-WoofFit AI adopts a hybrid approach:
+PocketVet adopts a hybrid strategy:
 
-Strong rule-based defaults
+Strong, safety-first rule-based defaults
 
 Optional personalization layered on top
 
-Advanced features (persistent memory, profile-based adaptation) are gated behind Pro, aligning engineering cost with monetization
+Advanced features (persistent memory, profile-based adaptation) gated behind Pro, aligning engineering cost with monetization
 
-Future iterations can re-run this evaluation as richer data becomes available
+This evaluation can be re-run as richer, real-world data becomes available.
 
 How to Run the Evaluation
 python3 evaluation/src/run_eval.py
@@ -137,12 +146,13 @@ python3 evaluation/src/run_eval.py
 Why This Evaluation Exists
 
 This experiment is intentionally simple, transparent, and reproducible.
+
 Its purpose is to demonstrate:
 
-Analytical thinking
+Analytical rigor
 
 Willingness to test assumptions
 
-Product decisions informed by data, not hype
+Product decisions driven by evidence—not AI hype
 
-This evaluation directly informs WoofFit AI’s feature roadmap and business strategy.
+This evaluation directly informs PocketVet’s roadmap, feature gating strategy, and long-term product positioning.
